@@ -1,0 +1,115 @@
+package PostingService;
+
+import Architecture_Posting.IPAddress;
+import Architecture_Posting.NetworkManager;
+import Architecture_Posting.Preferences;
+import GUI.LoginForm;
+import PeerAction.*;
+import SuperPeerAction.PostObject;
+import Architecture_Posting.Utils;
+import java.util.*;
+
+/**
+ * PostHandler uses to handle post message
+ *
+ * @author Thanh Le Quoc
+ */
+public class PostHandler extends Thread {
+
+    public static Map postTable;  //post table     
+    Post postMessage;
+    public static Vector<PostObject> recieveListPost = new Vector<PostObject>(); // receive listPost from friends
+    public static Vector<String> showListPost = new Vector<String>();
+    Utils utils = new Utils();
+    boolean isServerID;
+    boolean isServerName = utils.checkServerName(LoginForm.currentUser.getUserName());
+
+    public PostHandler(IPAddress ip, Post postMessage) {
+        this.postMessage = postMessage;
+        postMessage.setPostIP(ip);  //set IPAddress of post
+        System.out.println("\n ### Server : Packet == POST -- " + postMessage.getMessageID());
+
+    }
+
+    public static void initPostTable() {
+        postTable = new Hashtable(5000);
+    }
+
+    public void run() {
+        if (!postTable.containsKey(postMessage.getMessageID())) //check that postMessage is not already in table
+        {
+            postTable.put(postMessage.getMessageID(), postMessage);
+            String listFriendID = postMessage.getGroupFriendID();
+            String[] tempListFriendID = listFriendID.split(":");
+
+            boolean isFriends = checkGroupFriendIDPost(LoginForm.currentUser.getIdUserLogin(), tempListFriendID);
+            boolean isPeer = serverCheckListFriendorPeer(postMessage, Preferences.peerManageList);
+
+            // in case of super peers
+            if (isServerName) {
+
+                // check list Friend in Post to save post to friends News feed
+                for (int i = 0; i < tempListFriendID.length; i++) {
+                    boolean isNewsFeedOfPeer = checkNewsFeedForPeer(tempListFriendID[i], Preferences.peerManageList);
+                    if (isNewsFeedOfPeer) {
+                        Preferences.writeNewsFeed(postMessage.getPostTypeString(postMessage.getPayload()), postMessage.getMessageID(), tempListFriendID[i], postMessage.getUserID(), postMessage.getUserName(), postMessage.getPostStatusContent(), postMessage.getCreatedDate());
+                    }
+                }
+
+                String listServerID = postMessage.getGroupSuperPeerID();
+                /*
+                 if list server peer in post message contain id of server logging in 
+                 and the user request are the peer that SP are managing, then it will store the message
+                 */
+                isServerID = utils.checkServerID(LoginForm.currentUser.getIdUserLogin(), listServerID);
+                if (isPeer && isServerID) { // if id of user post is managing by SP and the post is requiring SP store this message based on List Super Peer in Post 
+                    Preferences.statusWriteToFileSuperPeer(postMessage.getPostTypeString(postMessage.getPayload()), postMessage.getUserID(), postMessage.getUserName(), postMessage.getMessageID(), postMessage.getGroupFriendID(), postMessage.getPostStatusContent(), postMessage.getCreatedDate());
+                    Preferences.writeNewsFeed(postMessage.getPostTypeString(postMessage.getPayload()), postMessage.getMessageID(), postMessage.getUserID(), postMessage.getUserID(), postMessage.getUserName(), postMessage.getPostStatusContent(), postMessage.getCreatedDate());
+                }
+
+                NetworkManager.writeButOne(postMessage.getPostIP(), postMessage);  // Post is forwarded to all connected nodes except one from which query came.
+            }
+
+            // if user is friend in the post message, it will show on news feed in case of both peers and super peers
+            if (isFriends) {
+                PostObject post = new PostObject();
+                post.setNamePost(postMessage.getUserName());
+                post.setPostID(postMessage.getMessageID());
+                post.setContentPost(postMessage.getPostStatusContent());
+                post.setGroupID(postMessage.getGroupFriendID());
+                post.setCreatedDate(postMessage.getCreatedDate());
+                post.setUserIDPost(postMessage.getUserID());
+                (new PeerReceivePost()).receivePost(post);
+            }
+        }
+    }
+
+    // use to check group of friends in the post message with the user logging in
+    public static boolean checkGroupFriendIDPost(String userLogin, String[] listPeerOrFriend) {
+        for (int i = 0; i < listPeerOrFriend.length; i++) {
+            if (userLogin.equals(listPeerOrFriend[i])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // use to super peers check whether friends in the post message are storing at database
+    public static boolean serverCheckListFriendorPeer(Post post, Vector<String> listPeerOrFriend) {
+        String userPostID = post.getUserID();
+        if (listPeerOrFriend.contains(userPostID)) {
+            return true;
+        }
+        return false;
+    }
+
+    // use to super peers check whether newsfeed of friends in the post message that  are storing at database
+    public static boolean checkNewsFeedForPeer(String friendID, Vector<String> listPeerOrFriend) {
+        for (int i = 0; i < listPeerOrFriend.size(); i++) {
+            if (friendID.equals(listPeerOrFriend.get(i)) || friendID.equals(LoginForm.currentUser.getIdUserLogin())) { // only server use this class
+                return true;
+            }
+        }
+        return false;
+    }
+}
